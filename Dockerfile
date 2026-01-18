@@ -17,6 +17,12 @@ RUN python -m pip install --upgrade pip \
 # Copy the rest of the app (place your baked models in the repo, e.g. `models/`, so they are included)
 COPY . .
 
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+
 # Env and port
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8080
