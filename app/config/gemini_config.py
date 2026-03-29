@@ -69,7 +69,7 @@ default_generation_config = types.GenerateContentConfig(
 
 
 def get_model(
-    model: str = "gemini-2.0-flash-exp",
+    model: str = "gemini-2.5-flash",
     temperature: float = 0.8,
     top_p: float = 0.95,
     top_k: int = 64,
