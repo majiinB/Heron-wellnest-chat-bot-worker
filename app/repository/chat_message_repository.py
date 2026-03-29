@@ -257,6 +257,24 @@ class ChatMessageRepository:
         result = await fetch_one(query, {"user_id": user_id, "session_id": session_id})
         return result["count"] if result else 0
 
+    async def count_messages_total(self, session_id: str, user_id: str) -> int:
+        """Counts all non-deleted messages in a session for a user."""
+        query = """
+            SELECT COUNT(*) as count FROM chat_messages
+            WHERE session_id = :session_id AND user_id = :user_id AND is_deleted = FALSE
+        """
+        result = await fetch_one(query, {"session_id": session_id, "user_id": user_id})
+        return result["count"] if result else 0
+
+    async def count_messages_by_role(self, session_id: str, user_id: str, role: Literal["student", "bot"]) -> int:
+        """Counts all non-deleted messages for a specific role in a session."""
+        query = """
+            SELECT COUNT(*) as count FROM chat_messages
+            WHERE session_id = :session_id AND user_id = :user_id AND role = :role AND is_deleted = FALSE
+        """
+        result = await fetch_one(query, {"session_id": session_id, "user_id": user_id, "role": role})
+        return result["count"] if result else 0
+
     async def find_by_message_before_id(
         self,
         session_id: str,
@@ -380,4 +398,3 @@ class ChatMessageRepository:
 
         results = await fetch_all(query, params)
         return [dict(row) for row in results]
-

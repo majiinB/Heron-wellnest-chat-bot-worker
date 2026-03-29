@@ -14,6 +14,7 @@ Handles Pub/Sub message processing for chat messages, including:
 """
 
 from typing import Dict, Any, Optional
+import json
 from app.repository.chat_session_repository import ChatSessionRepository
 from app.repository.chat_message_repository import ChatMessageRepository
 from app.utils.crypto_utils import decrypt
@@ -29,6 +30,12 @@ class ChatService:
 
     Handles the complete workflow from Pub/Sub message receipt to AI response generation.
     """
+
+    HARD_STOP_TOTAL = 100
+    HARD_STOP_ROLE = 50
+    NEAR_STOP_TOTAL = 90
+    NEAR_STOP_ROLE = 45
+    PH_HOTLINE = "1553"  # National Center for Mental Health Crisis Hotline
 
     def __init__(self):
         """Initialize repositories and logger."""
@@ -159,16 +166,54 @@ class ChatService:
                     "reason": "Bot response already exists for this message"
                 }
 
+            # Step 6.5: Count messages for limit enforcement (non-deleted)
+            total_count = await self.message_repo.count_messages_total(session_id, user_id)
+            student_count = await self.message_repo.count_messages_by_role(session_id, user_id, "student")
+            bot_count = await self.message_repo.count_messages_by_role(session_id, user_id, "bot")
+
+            hard_stop = (
+                total_count >= self.HARD_STOP_TOTAL or
+                student_count >= self.HARD_STOP_ROLE or
+                bot_count >= self.HARD_STOP_ROLE
+            )
+            near_limit = (
+                total_count >= self.NEAR_STOP_TOTAL or
+                student_count >= self.NEAR_STOP_ROLE or
+                bot_count >= self.NEAR_STOP_ROLE
+            )
+
             # Step 7: Decrypt current message and previous messages, build conversation context
             self.logger.info(f"Decrypting current message and {len(previous_messages)} previous messages")
-            conversation_context = self._build_conversation_context(previous_messages, current_message)
-
-            # Step 8: Generate AI response using Gemini
-            self.logger.info(f"Generating AI response for session {session_id}")
-            bot_response = await self.generate_ai_response(
-                conversation_context=conversation_context,
-                system_prompt=system_prompt
+            conversation_context = self._build_conversation_context(
+                previous_messages,
+                current_message,
+                near_limit=near_limit,
+                hard_stop=hard_stop
             )
+
+            # Step 8: Generate AI response using Gemini (or graceful close on hard stop)
+            self.logger.info(f"Generating AI response for session {session_id}")
+
+            if hard_stop:
+                bot_response_text = (
+                    "Salamat sa pag-share. Kailangan na nating tapusin ang usapan para hindi humaba masyado. "
+                    "Kung gusto mo, pwede kitang i-connect sa CGCS para sa counseling o kamustahan session. "
+                    f"Kung urgent ang tulong na kailangan mo, tumawag sa {self.PH_HOTLINE}."
+                )
+                should_notify = False
+            else:
+                ai_payload = await self.generate_ai_response(
+                    conversation_context=conversation_context,
+                    system_prompt=system_prompt,
+                    near_limit=near_limit
+                )
+
+                bot_response_text = ai_payload.get("response") or "I apologize, but I could not generate a response right now."
+                should_notify = bool(ai_payload.get("should_notify"))
+
+                if should_notify:
+                    # Placeholder for future Pub/Sub notification to counselor
+                    self.logger.warning("Self-harm indication detected; notify workflow placeholder triggered")
 
             # Step 9: Calculate next sequence number and save bot response with retry logic
             # Handles race condition when multiple requests try to use the same sequence number
@@ -187,7 +232,7 @@ class ChatService:
                     self.logger.info(f"Attempting to save bot response with sequence number {next_sequence} (attempt {retry_count + 1}/{max_retries})")
 
                     # Step 10: Encrypt and save bot response to database
-                    encrypted_response = encrypt(bot_response, self.encryption_key)
+                    encrypted_response = encrypt(bot_response_text, self.encryption_key)
 
                     await self.message_repo.create_message(
                         user_id=user_id,
@@ -258,17 +303,19 @@ class ChatService:
     async def generate_ai_response(
         self,
         conversation_context: str,
-        system_prompt: Optional[str] = None
-    ) -> str:
+        system_prompt: Optional[str] = None,
+        near_limit: bool = False
+    ) -> Dict[str, Any]:
         """
         Generate an AI response using Google Gemini.
 
         Args:
             conversation_context: The formatted conversation history
             system_prompt: Optional system instruction to guide AI behavior
+            near_limit: Whether the conversation is nearing the hard stop
 
         Returns:
-            The AI-generated response text
+            Dict with keys: response (str), should_notify (bool)
 
         Raises:
             Exception: If AI generation fails
@@ -276,21 +323,38 @@ class ChatService:
         try:
             # Default system prompt if none provided
             if not system_prompt:
-                system_prompt = """You are a helpful and empathetic mental health support chatbot for students. 
-Your role is to:
-- Listen actively and respond with empathy
-- Provide supportive and constructive guidance
-- Ask clarifying questions when needed
-- Recognize when professional help may be needed
-- Maintain a warm, non-judgmental tone
+                system_prompt = f"""
+You are a helpful, empathetic, and safety-aware mental health support chatbot for students.
+Output strictly as JSON with keys: response (string), should_notify (boolean).
+Set should_notify=true if you see indications of self-harm or suicide risk. Otherwise false.
+Tone: warm, respectful, not overly validating; give encouraging, actionable, context-aware guidance.
+Offer counselor/booking pathways when user seems very negative or asks for help; mention CGCS counseling or kamustahan sessions when wrapping up.
+If topic is family/relationships, tailor advice to the context; offer supportive encouragement (e.g., failure is part of success) without empty validation.
+Be conversational: ask brief follow-ups or invitations to share more, unless wrapping up.
+Handle gibberish by politely asking for clarity (e.g., "what are you trying to say?"). Handle swearing calmly and redirect constructively.
+Use respectful "real talk" but avoid offense.
+If user expresses self-harm, encourage immediate help and include PH hotline {self.PH_HOTLINE}.
+When nearing session limit, start guiding toward a graceful close.
+"""
 
-Always prioritize the student's wellbeing and safety."""
+            if near_limit:
+                system_prompt += "\nYou are close to the session message limit; start wrapping up and propose next steps."
+
+            response_schema = {
+                "type": "object",
+                "properties": {
+                    "response": {"type": "string"},
+                    "should_notify": {"type": "boolean"}
+                },
+                "required": ["response", "should_notify"],
+            }
 
             # Get model configuration
             model_id, config = get_model(
                 temperature=0.8,
                 max_output_tokens=1024,
-                response_mime_type="text/plain",
+                response_mime_type="application/json",
+                response_schema=response_schema,
                 system_instruction=system_prompt
             )
 
@@ -302,12 +366,25 @@ Always prioritize the student's wellbeing and safety."""
                 config=config
             )
 
-            # Extract response text
-            response_text = response.text if response.text else "I apologize, but I'm having trouble generating a response right now. Could you please try again?"
+            # Parse structured response
+            raw_text = response.text if response and response.text else None
+            parsed: Dict[str, Any] = {"response": None, "should_notify": False}
 
-            self.logger.info(f"Generated AI response: {response_text[:100]}...")
+            if raw_text:
+                try:
+                    parsed_json = json.loads(raw_text)
+                    parsed["response"] = parsed_json.get("response")
+                    parsed["should_notify"] = bool(parsed_json.get("should_notify"))
+                except Exception:
+                    self.logger.warning("Failed to parse structured Gemini response; falling back to text")
+                    parsed["response"] = raw_text
 
-            return response_text
+            if not parsed["response"]:
+                parsed["response"] = "I apologize, but I'm having trouble generating a response right now. Could you please try again?"
+
+            self.logger.info(f"Generated AI response: {str(parsed['response'])[:100]}...")
+
+            return parsed
 
         except Exception as e:
             self.logger.error(f"Error generating AI response: {str(e)}", exc_info=True)
@@ -316,7 +393,9 @@ Always prioritize the student's wellbeing and safety."""
     def _build_conversation_context(
         self,
         previous_messages: list[Dict[str, Any]],
-        current_message: Dict[str, Any]
+        current_message: Dict[str, Any],
+        near_limit: bool = False,
+        hard_stop: bool = False
     ) -> str:
         """
         Build conversation context from previous messages and current message.
@@ -324,6 +403,8 @@ Always prioritize the student's wellbeing and safety."""
         Args:
             previous_messages: List of previous message dictionaries (ordered by created_at DESC)
             current_message: The current message from the user that triggered the bot
+            near_limit: Whether the conversation is close to the hard stop
+            hard_stop: Whether the conversation hit the hard stop
 
         Returns:
             Formatted conversation context string
@@ -360,6 +441,11 @@ Always prioritize the student's wellbeing and safety."""
         except Exception as e:
             self.logger.error(f"Failed to decrypt current message: {str(e)}")
             raise Exception(f"Cannot decrypt current message: {str(e)}")
+
+        if hard_stop:
+            context_lines.append("\nSystem: Conversation has reached the limit; provide a short wrap-up and offer CGCS counseling or kamustahan.")
+        elif near_limit:
+            context_lines.append("\nSystem: Conversation is nearing the limit; start guiding toward a wrap-up and offer next steps.")
 
         context_lines.append(f"\nStudent: {current_content}")
 
