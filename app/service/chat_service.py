@@ -31,11 +31,11 @@ class ChatService:
     Handles the complete workflow from Pub/Sub message receipt to AI response generation.
     """
 
-    HARD_STOP_TOTAL = 100
-    HARD_STOP_ROLE = 50
-    NEAR_STOP_TOTAL = 90
-    NEAR_STOP_ROLE = 45
-    PH_HOTLINE = "1553"  # National Center for Mental Health Crisis Hotline
+    HARD_STOP_TOTAL = env.HARD_STOP_TOTAL or 100
+    HARD_STOP_ROLE = env.HARD_STOP_ROLE or 50
+    NEAR_STOP_TOTAL = env.NEAR_STOP_TOTAL or 90
+    NEAR_STOP_ROLE = env.NEAR_STOP_ROLE or 45
+    PH_HOTLINE = env.PH_HOTLINE or "1553"  # National Center for Mental Health Crisis Hotline
 
     def __init__(self):
         """Initialize repositories and logger."""
@@ -196,9 +196,8 @@ class ChatService:
 
             if hard_stop:
                 bot_response_text = (
-                    "Salamat sa pag-share. Kailangan na nating tapusin ang usapan para hindi humaba masyado. "
-                    "Kung gusto mo, pwede kitang i-connect sa CGCS para sa counseling o kamustahan session. "
-                    f"Kung urgent ang tulong na kailangan mo, tumawag sa {self.PH_HOTLINE}."
+                    "Thanks for sharing. We need to wrap up so the session doesn’t run too long. "
+                    f"If you need urgent help, call {self.PH_HOTLINE} or go to CGCS (University of Makati, Room 209, 2nd floor, Academic Bldg. II) even without an appointment."
                 )
                 should_notify = False
             else:
@@ -333,7 +332,7 @@ If topic is family/relationships, tailor advice to the context; offer supportive
 Be conversational: ask brief follow-ups or invitations to share more, unless wrapping up.
 Handle gibberish by politely asking for clarity (e.g., "what are you trying to say?"). Handle swearing calmly and redirect constructively.
 Use respectful "real talk" but avoid offense.
-If user expresses self-harm, encourage immediate help and include PH hotline {self.PH_HOTLINE}.
+If user expresses self-harm, encourage immediate help and include PH hotline {self.PH_HOTLINE} and CGCS location (University of Makati, Room 209, 2nd floor, Academic Bldg. II) and indicate that appointments are not required and the office is always open.
 When nearing session limit, start guiding toward a graceful close.
 """
 

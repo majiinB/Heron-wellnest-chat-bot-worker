@@ -62,6 +62,12 @@ class EnvConfig(BaseSettings):
         "case_sensitive": True
     }
 
+    HARD_STOP_TOTAL: Optional[int] = 100
+    HARD_STOP_ROLE: Optional[int] = 50
+    NEAR_STOP_TOTAL: Optional[int] = 90
+    NEAR_STOP_ROLE: Optional[int] = 45
+    PH_HOTLINE: Optional[str] = "1553"
+
 # Create and validate environment configuration
 try:
     env = EnvConfig()
