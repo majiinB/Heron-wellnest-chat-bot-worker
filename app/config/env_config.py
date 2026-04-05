@@ -48,6 +48,11 @@ class EnvConfig(BaseSettings):
         description="Pub/Sub subscription ID for chat bot worker"
     )
 
+    PUBSUB_NOTIFICATION_TOPIC: str = Field(
+        min_length=1,
+        description="Pub/Sub Notification topic is required"
+    )
+
     # Google Cloud Project
     GOOGLE_CLOUD_PROJECT_ID: Optional[str] = None
 

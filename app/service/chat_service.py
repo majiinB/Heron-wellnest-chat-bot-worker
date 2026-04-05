@@ -15,14 +15,19 @@ Handles Pub/Sub message processing for chat messages, including:
 
 from typing import Dict, Any, Optional
 import json
+
+from sqlalchemy import true
+
 from app.repository.chat_session_repository import ChatSessionRepository
 from app.repository.chat_message_repository import ChatMessageRepository
+from app.repository.counselor_notification_repository import CounselorNotificationRepository
 from app.utils.crypto_utils import decrypt
 from app.config.env_config import env
 from app.config.gemini_config import client, get_model
 from app.utils.logger_util import LoggerUtil
 from app.utils.crypto_utils import encrypt
 from sqlalchemy.exc import IntegrityError
+from app.utils.publisher_utill import publish_message
 
 class ChatService:
     """
@@ -41,6 +46,7 @@ class ChatService:
         """Initialize repositories and logger."""
         self.session_repo = ChatSessionRepository()
         self.message_repo = ChatMessageRepository()
+        self.counselor_notification_repo = CounselorNotificationRepository()
         self.logger = LoggerUtil().logger
         self.encryption_key = env.CONTENT_ENCRYPTION_KEY
 
@@ -211,8 +217,48 @@ class ChatService:
                 should_notify = bool(ai_payload.get("should_notify"))
 
                 if should_notify:
-                    # Placeholder for future Pub/Sub notification to counselor
-                    self.logger.warning("Self-harm indication detected; notify workflow placeholder triggered")
+                    # Resolve counselor targets based on student's program/department.
+                    routing = await self.counselor_notification_repo.resolve_targets_by_student_id(user_id)
+                    student_info = routing.get("student", {})
+                    counselor_user_ids = routing.get("counselor_user_ids", [])
+
+                    if not counselor_user_ids:
+                        self.logger.warning(
+                            f"Self-harm indication detected for student {user_id}, but no counselors found for routing"
+                        )
+                    else:
+                        for counselor_user_id in counselor_user_ids:
+                            notification_payload = {
+                                "userId": str(counselor_user_id),
+                                "type": "system_alerts",
+                                "title": "Urgent: Chat Bot Detected Self-Harm Indication",
+                                "content": (
+                                                "The chatbot detected a potential self-harm indication in a student's message. "
+                                                "Please reach out to the student as soon as possible to check on their well-being.\n\n"
+                                                "Student Info:\n"
+                                                f"- User ID: {student_info.get('user_id', 'N/A')}\n"
+                                                f"- Email: {student_info.get('email', 'N/A')}\n"
+                                                f"- Program ID: {student_info.get('program_id', 'N/A')}\n"
+                                                f"- College/Department ID: {student_info.get('college_department_id', 'N/A')}"
+                                            ),
+                                "sendEmail": True,
+                                "sendInApp": True
+                            }
+
+                            try:
+                                published_message_id = await publish_message(
+                                    topic_name=env.PUBSUB_NOTIFICATION_TOPIC,
+                                    payload=notification_payload,
+                                )
+                                self.logger.info(
+                                    f"Published counselor notification for owner={counselor_user_id}, message_id={published_message_id}"
+                                )
+                            except Exception as notify_error:
+                                # Do not fail chat response generation if alert publish fails.
+                                self.logger.error(
+                                    f"Failed to publish counselor notification for owner={counselor_user_id}: {notify_error}",
+                                    exc_info=True
+                                )
 
             # Step 9: Calculate next sequence number and save bot response with retry logic
             # Handles race condition when multiple requests try to use the same sequence number

@@ -59,33 +59,23 @@ class LoggerUtil:
         logger.addHandler(console_handler)
         return logger
 
-    def info(self, message: str, extra: Optional[dict] = None):
-        """Log info level message with optional extra data"""
-        if extra:
-            self.logger.info(f"{message} - {extra}")
-        else:
-            self.logger.info(message)
+    def info(self, message: str, *args, **kwargs):
+        self.logger.info(message, *args, **kwargs)
 
-    def error(self, message: str, extra: Optional[dict] = None):
-        """Log error level message with optional extra data"""
-        if extra:
-            self.logger.error(f"{message} - {extra}")
-        else:
-            self.logger.error(message)
+    def error(self, message: str, *args, **kwargs):
+        self.logger.error(message, *args, **kwargs)
 
-    def warning(self, message: str, extra: Optional[dict] = None):
-        """Log warning level message with optional extra data"""
-        if extra:
-            self.logger.warning(f"{message} - {extra}")
-        else:
-            self.logger.warning(message)
+    def warning(self, message: str, *args, **kwargs):
+        self.logger.warning(message, *args, **kwargs)
 
-    def debug(self, message: str, extra: Optional[dict] = None):
-        """Log debug level message with optional extra data"""
-        if extra:
-            self.logger.debug(f"{message} - {extra}")
-        else:
-            self.logger.debug(message)
+    def debug(self, message: str, *args, **kwargs):
+        self.logger.debug(message, *args, **kwargs)
+
+    def exception(self, message: str, *args, **kwargs):
+        self.logger.exception(message, *args, **kwargs)
+
+    def critical(self, message: str, *args, **kwargs):
+        self.logger.critical(message, *args, **kwargs)
 
 # Create singleton logger instance
 logger = LoggerUtil()
